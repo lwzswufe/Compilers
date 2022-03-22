@@ -1,11 +1,17 @@
 from io import FileIO
 from copy import deepcopy
-from Symbol import *
+from typing import Dict, List
+import sys
+import os
+sys.path.append(os.path.abspath("."))
+sys.path.append(os.path.abspath(".."))
+from Symbol import Operator, Token, Node, Variable, Reversed, Type, Function, Literal, CreateVar
 
 
 '''
 对识别好的词法单元进行语法分析
 '''
+
 
 STATE_DEFAULT = 0
 STATE_PARAM = 1
@@ -21,6 +27,7 @@ OPERATOR_PRIORITY = {"!": 0,
                      "&&": 5,
                      "||": 6,
                      "=": 7}
+
 
 class UserSyntaxError(SyntaxError):
     def __init__(self, args):
@@ -40,7 +47,6 @@ def ShowSubToken(f: FileIO, token: Token, deep: int = 0):
     '''
     显示子token
     '''
-    
     if isinstance(token, Operator):
         brackets_dict = {"(": ")", "[": "]", "{": "}"} 
         if token.GetName() in brackets_dict.keys():
@@ -51,15 +57,11 @@ def ShowSubToken(f: FileIO, token: Token, deep: int = 0):
                 ShowSubToken(f, sub_token, deep+1)
             r_token = Operator(brackets_dict[token.GetName()])
             PrintCurrentToken(f, r_token, deep)
-        elif len(token) == 2:
-            ShowSubToken(f, token.GetSubToken(0), deep+1)
+        else:
             # 显示当前token
             PrintCurrentToken(f, token, deep)
-            ShowSubToken(f, token.GetSubToken(1), deep+1)
-        elif len(token) == 1:
-            # 显示当前token
-            PrintCurrentToken(f, token, deep)
-            ShowSubToken(f, token.GetSubToken(0), deep+1)
+            for sub_token in token.sub_tokens:
+                ShowSubToken(f, token.GetSubToken(0), deep+1)
     else:
         # 显示当前token
         PrintCurrentToken(f, token, deep)
@@ -93,13 +95,13 @@ class SyntaxParser(object):
         # 局部变量集合
         self.local_var_set = set()
         self.line_id = 0
-    
+
     def SetSymbolTable(self, symbol_table: Dict[str, Token]):
         '''
         设置符号表
         '''
         self.global_symbol_dict = symbol_table
-    
+
     def GetNextToken(self) -> Token:
         '''
         获取下一个词法单元
@@ -137,7 +139,7 @@ class SyntaxParser(object):
         else:
             if isinstance(token, Operator) and token.GetName() in OPERATOR_PRIORITY.keys():
                 token.SetPriority(OPERATOR_PRIORITY[token.GetName()])
-            return token 
+            return token
 
     def ResetForwardIndex(self):
         '''
@@ -175,7 +177,7 @@ class SyntaxParser(object):
                 # 是逗号 继续循环
                 if next_token.GetName() == ",":
                     pass
-                # 注释 
+                # 注释
                 elif next_token.GetName() == "//":
                     pass
                 # 是分号 继续循环 仅限花括号
@@ -205,7 +207,7 @@ class SyntaxParser(object):
                 # 表达式
                 exp_token = self.ParseExpression(next_token)
                 if len(exp_token) > 0:
-                    brackets_token.AddSubToken(exp_token.GetSubToken(0))
+                    brackets_token.AddSubToken(exp_token)
                 # 花括号 开始下一语句
                 # if brackets_token.GetName() == "{":
                 #     continue
@@ -213,7 +215,7 @@ class SyntaxParser(object):
                 #     raise UserSyntaxError("line {}:{} missing {} we get:{} name:{}".format(
                 #                         next_token.line_id, next_token.char_id, right_brackets, type(next_token), next_token.GetName()))
             next_token = self.GetNextToken()
-        return brackets_token 
+        return brackets_token
 
     def ParseFunction(self, fun_token: Token) -> Token:
         '''
@@ -234,12 +236,20 @@ class SyntaxParser(object):
 
     def ParseExpression(self, next_token: Token) -> Token:
         '''
-        解析表达式
+        解析表达式 文法如下
+        E -> E op E  二元运算符
+        E -> op E   一元运算符
+        E -> i     字面量/变量/函数
+        E -> (E)     括号
         '''
-        exp_node = Node("express") # 返回的表达式节点
+        exp_node = Node("E")  # 返回的表达式节点
         exp_node.SetPriority(99)
         cur_node = exp_node
         last_node = next_token
+        line_id = next_token.line_id
+        char_id = next_token.char_id
+        if line_id == 258:
+            a = 1
         # if next_token.GetName() == "barssinceentry":
         #     a = 1
         while next_token is not None:
@@ -253,23 +263,18 @@ class SyntaxParser(object):
                 # 右括号
                 elif next_token.GetName() in (")", "]", "}"):
                     # print("expression end with {}".format(next_token.GetName()))
-                    if next_token.GetName() == "}":
-                        a = 1
                     self.ResetForwardIndex()    # 复位
-                    return exp_node
+                    break
                 # 逗号 直接返回
                 elif next_token.GetName() == ",":
                     self.ResetForwardIndex()    # 复位
-                    return exp_node
+                    break
                 # 分号 直接返回
                 elif next_token.GetName() == ";":
-                    return exp_node
+                    break
                 # 注释 跳过
                 elif next_token.GetName() == "//":
                     pass
-                # 非
-                elif next_token.GetName() == "!":
-                    cur_node.AddSubToken(next_token)
                 else:
                     # 识别负号
                     if next_token.GetName() == "-":
@@ -281,7 +286,11 @@ class SyntaxParser(object):
                         # 负号的情况 设置优先级为单运算符级别
                         else:
                             next_token.SetPriority(1)
+                            cur_node.SetPriority(1)
                             print("recognition negative sign {}:{}".format(next_token.line_id, next_token.char_id))
+                    # 当前节点为空的情况 表达式初始节点
+                    new_node = Node("E")
+                    new_node.SetPriority(next_token.priority)
                     # 比较当前节点 与 前一个节点的优先级 若 当前节点优先级较高 则 根据优先级向上回溯
                     while cur_node.priority <= next_token.priority:
                         # 当前节点优先级较高 则去寻找当前节点的父节点
@@ -289,35 +298,50 @@ class SyntaxParser(object):
                         if father_token is not None:
                             cur_node = cur_node.father_token
                         else:
-                            raise UserSyntaxError("father token is none")
-                    if next_token.GetName() == "-" and last_node.GetName() == "=":
-                        a = 1
-                    # 新节点优先级较高 新节点成为前节点的右子节点
-                    if len(cur_node) > 1 or (len(cur_node) > 0 and cur_node is exp_node):
-                        # 前节点的右子节点成为当前节点的左子节点
-                        sub_node = cur_node.GetSubToken(-1)
-                        next_token.AddSubToken(sub_node)
-                        cur_node.DelSubToken(-1)
-                    cur_node.AddSubToken(next_token)
-                    cur_node = next_token
-                    # exp_node.AddSubToken(next_token)
+                            break
+                    # 新节点优先级较高
+                    if cur_node.priority > next_token.priority:
+                        # 新节点优先级较高 新节点成为前节点的右子节点
+                        if len(cur_node) > 1 or (len(cur_node) > 0 and cur_node is exp_node):
+                            # 当前节点的最右子节点成为新节点的左子节点
+                            sub_node = cur_node.GetSubToken(-1)
+                            new_node.AddSubToken(sub_node)
+                            cur_node.DelSubToken(-1)
+                        # 在执行 添加左子节点后 再添加当前符号节点
+                        new_node.AddSubToken(next_token)
+                        cur_node.AddSubToken(new_node)
+                    # 新节点优先级较低
+                    else:
+                        # 在执行 添加当前节点作新节点为左子节点后 再添加当前符号节点
+                        new_node.AddSubToken(cur_node)
+                        new_node.AddSubToken(next_token)
+                    # 更新最新节点
+                    cur_node = new_node
+                # exp_node.AddSubToken(next_token)
             # 保留字
             elif isinstance(next_token, Reversed):
                 self.ResetForwardIndex()    # 复位
                 return exp_node
-            # 函数
-            elif isinstance(next_token, Function):
-                fun_token = self.ParseFunction(next_token)
-                cur_node.AddSubToken(fun_token)
-            # 变量
-            elif isinstance(next_token, Variable):
-                cur_node.AddSubToken(next_token)
-            # 字面量
-            elif isinstance(next_token, Literal):
-                cur_node.AddSubToken(next_token)
+            else:
+                # 函数
+                if isinstance(next_token, Function):
+                    terminal_node = self.ParseFunction(next_token)
+                # 变量                                   字面量
+                elif isinstance(next_token, Variable) or isinstance(next_token, Literal):
+                    terminal_node = next_token
+                # 判断当前节点是否为空
+                new_node = Node("E")
+                new_node.SetPriority(0)
+                new_node.AddSubToken(terminal_node)
+                cur_node.AddSubToken(new_node)
+            # 获取下一个词法单元
             last_node = next_token
             next_token = self.GetNextToken()
-        return exp_node
+        # endwhile 表达式分析结束
+        # 无效表达式的情况 返回根节点
+        if len(exp_node) == 0:
+            return exp_node
+        return exp_node.GetSubToken(0)
 
     def ParseDefineGrammer(self, type_token: Token) -> Token:
         '''
@@ -376,11 +400,11 @@ class SyntaxParser(object):
             if len(exp_token) == 0:
                 raise UserSyntaxError("line {}:{} Unexcept Reversed:{} in if".format(token.line_id, token.char_id, token.GetName()))
             else:
-                return exp_token.GetSubToken(0)
+                return exp_token
 
     def ParseIfGrammer(self, if_token: Token) -> Token:
         '''
-        解析 If语句 
+        解析 If语句
         if 对象下有三个 成员 condition if_do else_do（可选）
         if () {} else {}
         if () {} else if () {} else {}
@@ -450,7 +474,7 @@ class SyntaxParser(object):
         else:
             exp_token = self.ParseExpression(token)
             if len(exp_token) > 0:
-                self.cur_token.AddSubToken(exp_token.GetSubToken(0))
+                self.cur_token.AddSubToken(exp_token)
 
     def Parse(self, token_list: List[Token]) -> Token:
         '''
@@ -465,12 +489,14 @@ class SyntaxParser(object):
             self.begin_idx = max(self.forward_idx, self.begin_idx + 1)
         print(">>>> SyntaxAnalysis Over <<<<")
         return self.root
-    
+
     def Show(self):
-        with open ("Syntax.txt", "w") as f: 
+        '''
+        输出程序的语法结构到指定文件
+        '''
+        with open("Syntax.txt", "w") as f:
             ShowSubToken(f, self.root, 0)
-            
-            
+
 
 if __name__ == "__main__":
     import os

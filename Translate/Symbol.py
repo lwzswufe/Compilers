@@ -1,6 +1,4 @@
-from copy import copy
-from typing import List, Dict, Set
-from abc import abstractclassmethod
+from typing import List
 from enum import IntEnum
 
 
@@ -24,16 +22,16 @@ class VariableType(object):
         self.reference = reference
         self.pointer = pointer
         self.membertype = None
-    
+
     def __str__(self) -> str:
         return self.ShowType()
-    
+
     def SetMemberType(self, mtype) -> None:
         '''
         设置容器类储存对象的类型
         '''
         self.membertype = mtype
-    
+
     def ShowType(self) -> str:
         '''
         显示类型
@@ -88,18 +86,18 @@ class Token(object):
         self.name = name        # 名称
         self.type = _type       # 数据类型
         self.sub_tokens = []    # 子token
-        self.father_token = None # 父节点 供回溯使用  
+        self.father_token = None  # 父节点 供回溯使用
         self.syn_attr = None    # 综合属性
         self.inh_attr = None    # 继承属性
         self.line_id = 0        # 行号
         self.char_id = 0        # 位置
-    
+
     def __len__(self) -> int:
         '''
         获取子token数量
         '''
         return len(self.sub_tokens)
-    
+
     def GetInfo(self) -> str:
         '''
         输出该符号的 位置 名称 类型 信息
@@ -130,7 +128,7 @@ class Token(object):
             return None
         else:
             return self.sub_tokens[idx]
-    
+
     def DelSubToken(self, idx: int):
         '''
         删除指定位置的子对象
@@ -139,13 +137,13 @@ class Token(object):
             return
         else:
             del self.sub_tokens[idx]
-            
+
     def GetName(self) -> str:
         '''
         获取词名
         '''
         return self.name.lower()
-    
+
     def SetDataType(self, datatype: VariableType) -> None:
         '''
         更改数据类型
@@ -160,12 +158,18 @@ class Node(Token):
     def __init__(self, name: str, _type: VariableType = UNDEFINE_TYPE) -> None:
         super().__init__(name, _type)
         self.priority = 0
-    
+
     def SetPriority(self, priority: int):
         '''
         设置运算符优先级 1 为最高
         '''
         self.priority = priority
+
+    def GetName(self) -> str:
+        '''
+        获取词名
+        '''
+        return self.name
 
 
 class Literal(Token):
@@ -215,13 +219,13 @@ class Function(Token):
         super().__init__(name, _type)
         self.param_list: List[Token] = []        # 参数类型列表
         self.return_var: Token = Variable("", _type)
-    
+
     def SetParamList(self, params: List[Token]):
         '''
         设置参数列表
         '''
         self.param_list = params
-    
+
     def SetReturnType(self, token: Token):
         '''
         设置返回值
@@ -276,45 +280,7 @@ class Brackets(Operator):
         else:
             return self.prefix + self.name + self.suffix
 
-# 一元运算符
-class UnaryOperator(Operator):
-    def __str__(self):
-        assert len(self.sub_tokens) == 1, "len(self.sub_tokens) != 1"
-        return "{}{}{}{}".format(self.prefix, self.name, self.suffix, str(self.sub_tokens[0]))
 
-
-# 负数运算符
-class Negative(UnaryOperator):
-    name = "-"
-
-
-# 二元运算符
-class BinaryOperator(Operator):
-    def __str__(self):
-        assert len(self.sub_tokens) >= 2, "len(self.sub_tokens):{} != 2 name:{}".format(len(self.sub_tokens), self.name)
-        return "{}{}{}{}{}".format(str(self.sub_tokens[0]), self.prefix, self.name, self.suffix, str(self.sub_tokens[1]))
-
-
-# 计算符号 + - * /
-class Calculate(BinaryOperator):
-    pass
-
-
-# 比较运算符 > < >= <= != ==
-class Compare(BinaryOperator):
-    pass
-
-
-# 逻辑运算符 || &&
-class Logical(BinaryOperator):
-    pass
-
-
-# 赋值运算符 =
-class Assignment(BinaryOperator):
-    pass
-
-    
 # 根据指定的类型_type  创建一个TB变量对象
 # 创建失败返回None
 def CreateVar(name: str, type_str: str, static: bool = False, const: bool = False, virtual: bool = False, 
