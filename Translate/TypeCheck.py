@@ -1,7 +1,10 @@
 from io import FileIO
-from copy import deepcopy
-from Symbol import *
-
+from typing import Dict, List
+import sys
+import os
+sys.path.append(os.path.abspath("."))
+sys.path.append(os.path.abspath(".."))
+from Symbol import Operator, Token, Node, Variable, Reversed, VariableType,BaseType, Function, Literal, CreateVar
 
 
 '''
@@ -39,9 +42,8 @@ def ShowSubToken(f: FileIO, token: Token, deep: int = 0):
     '''
     显示子token
     '''
-    
     if isinstance(token, Operator):
-        brackets_dict = {"(": ")", "[": "]", "{": "}"} 
+        brackets_dict = {"(": ")", "[": "]", "{": "}"}
         if token.GetName() in brackets_dict.keys():
             # 显示当前token
             PrintCurrentToken(f, token, deep)
@@ -129,7 +131,7 @@ class TypeCheck(object):
         self.body = None        # 程序主体部分
         self.vars = None        # 变量定义部分
         self.idx = -1           # 当前检查语句的编号 方便后期插入语句
-        self.insert_statement = 0 # 程序在本次类型检查中插入的语句数量
+        self.insert_statement = 0  # 程序在本次类型检查中插入的语句数量
         # 全局变量字典 不可变
         self.global_symbol_dict: Dict[str, Token] = {}
         # 局部变量字典 可变
@@ -154,7 +156,7 @@ class TypeCheck(object):
         # 变量定义区添加变量
         self.vars.append(token)
         return var_type
-    
+
     def InsertStatement(self, token: Token) -> None:
         '''
         插入一条语句到程序主体语句
@@ -204,27 +206,92 @@ class TypeCheck(object):
         # 返回引用对象 用于替换原有对象
         return ref_token
 
+    def MarkOperatorType(self, node: Node)：
+        '''
+        标记终结符为运算符的 节点的数据类型
+        '''
+        op_token = node.terminal
+        name = op_token.GetName()
+        # 比较运算符
+        if name in ('==', '!=', '>', '>=', '<', '<='):
+            node.SetDataType(TYPE_BOOL)
+        # 逻辑运算符
+        elif name in ('!', '&&', "||"):
+            node.SetDataType(TYPE_BOOL)
+            for sub_token in node.sub_tokens:
+                sub_token.SetDataType(TYPE_BOOL)
+        # 算数运算符
+        elif name in ('+', '-', '*', '/', '%'):
+            if len(node) <= 1:
+                pass
+            elif len(node) == 2:
+                member_type = self.MarkTokenType(node.GetSubToken(1))
+                node.SetDataType(member_type)
+            elif len(node) == 3:
+                # 二元运算符计算时 结算结果为较大类型 如果是容器类 则自动提取容器成员类型
+                left_type = self.MarkTokenType(node.GetSubToken(0))
+                right_type = self.MarkTokenType(node.GetSubToken(-1))
+                # 寻找两个类型的共同类型
+                try:
+                    common_type = GetCommonType(left_type, right_type)
+                    node.type = common_type
+                except UserTypeError as err:
+                    left_token = node.GetSubToken(0)
+                    right_token = node.GetSubToken(-1)
+                    print("line {}:{}  token {} {}  error:{}".format(op_token.line_id, op_token.char_id, left_token.GetName(), right_token.GetName(), err))
+            else:
+                pass
+        elif name == "=":
+            # 等号类型等于右节点
+            member_type = self.MarkTokenType(node.GetSubToken(-1))
+            node.SetDataType(member_type)
+        # 括号 仅限运算表达式的类型
+        elif name in ('('):
+            if len(node) == 1:
+                node.type = self.MarkTokenType(node.GetSubToken(0))
+        # 标记子节点类型
+        # for sub_token in node.sub_tokens:
+        #     self.MarkTokenType(sub_token)
+        op_token.SetDataType(node.type)
+
+    def MarkVariableType(self, token: Token):
+        '''
+        '''
+        name = token.GetName()
+        if name in self.global_symbol_dict.keys():
+            token.SetDataType(self.global_symbol_dict[name].type)
+        elif name in self.local_symbol_dict.keys():
+            token.SetDataType(self.local_symbol_dict[name].type)
+        else:
+            pass
+        if len(token) > 0:
+            self.MarkTokenType(token.GetSubToken(0))
+        # 序列变量的情况
+        if token.type.basetype == BaseType.SERIES:
+            if len(token) > 0:
+                return token.type.membertype
+
+    def MarkNodeType(self, node: Node) -> VariableType:
+        '''
+        标记 语法节点 (非终结符) 的类型
+        '''
+        node.type = self.M
+
     def MarkTokenType(self, token: Token) -> VariableType:
         '''
         标记每一个节点数据类型 返回节点的数据类型
         '''
         name = token.GetName()
-        if name == "max":
-            a = 1
-        # 变量
-        if isinstance(token, Variable):
-            if name in self.global_symbol_dict.keys():
-                token.SetDataType(self.global_symbol_dict[name].type)
-            elif name in self.local_symbol_dict.keys():
-                token.SetDataType(self.local_symbol_dict[name].type)
+        # 非终结符
+        if isinstance(token, Node):
+            terminal = token.terminal
+            if isinstance(terminal, Operator):
+                self.MarkOperatorType(token)
             else:
-                pass
-            if len(token) > 0:
-                self.MarkTokenType(token.GetSubToken(0))
-            # 序列变量的情况
-            if token.type.basetype == BaseType.SERIES:
-                if len(token) > 0:
-                    return token.type.membertype
+                token.type = self.MarkTokenType(token)
+        # 变量
+        elif isinstance(token, Variable):
+            self.MarkVariableType(token)
         # 字面量
         elif isinstance(token, Literal):
             is_string = sum([c.isalpha() for c in name]) > 0
@@ -250,46 +317,8 @@ class TypeCheck(object):
             return token.type
         # 运算符
         elif isinstance(token, Operator):
-            # 比较运算符
-            if name in ('==', '!=', '>', '>=', '<', '<='):
-                token.SetDataType(TYPE_BOOL)
-            # 逻辑运算符
-            elif name in ('!', '&&', "||"):
-                token.SetDataType(TYPE_BOOL)
-                for sub_token in token.sub_tokens:
-                    sub_token.SetDataType(TYPE_BOOL)
-            # 算数运算符
-            elif name in ('+', '-', '*', '/', '%'):
-                if len(token) == 0:
-                    pass
-                elif len(token) == 1:
-                    member_type = self.MarkTokenType(token.GetSubToken(0))
-                    token.SetDataType(member_type)
-                elif len(token) == 2:
-                    # 二元运算符计算时 结算结果为较大类型 如果是容器类 则自动提取容器成员类型
-                    left_type = self.MarkTokenType(token.GetSubToken(0))
-                    right_type = self.MarkTokenType(token.GetSubToken(1))
-                    # 寻找两个类型的共同类型
-                    try:
-                        common_type = GetCommonType(left_type, right_type)
-                        token.type = common_type
-                    except UserTypeError as err:
-                        left_token = token.GetSubToken(0)
-                        right_token = token.GetSubToken(0)
-                        print("line {}:{}  token {} {}  error:{}".format(token.line_id, token.char_id, left_token.GetName(), right_token.GetName(), err))
-                else:
-                    pass
-            elif name == "=":
-                # 等号类型等于右节点
-                member_type = self.MarkTokenType(token.GetSubToken(1))
-                token.SetDataType(member_type)
-            # 括号 仅限运算表达式的类型
-            elif name in ('('):
-                if len(token) == 1:
-                    token.type = self.MarkTokenType(token.GetSubToken(0))
-            # 标记子节点类型
-            for sub_token in token.sub_tokens:
-                self.MarkTokenType(sub_token)
+            pass
+        # 保留字
         elif isinstance(token, Reversed):
             if len(token) > 0:
                 cond_token = token.GetSubToken(0)
@@ -369,7 +398,6 @@ class TypeCheck(object):
                     print("line {}:{}  token {} {}  error:{}".format(token.line_id, token.char_id, left_token.GetName(), right_token.GetName(), err))
             else:
                 raise UserTypeError("line {}:{} token:{} has more than 2 sub tokenes".format(token.line_id, token.char_id, token.GetName()))
-            
         # 函数
         elif isinstance(token, Function):
             if len(token) == 0:
@@ -437,7 +465,6 @@ class TypeCheck(object):
         else:
             pass
         # 对子节点进行检查
-        
 
     def Check(self, root: Token):
         '''
@@ -457,7 +484,10 @@ class TypeCheck(object):
                     self.idx = self.GetNextIndex()
 
     def Show(self):
-        with open ("TypeCheck.txt", "w") as f: 
+        '''
+        显示类型检查的结果
+        '''
+        with open("TypeCheck.txt", "w") as f:
             ShowSubToken(f, self.root, 0)
 
     def SetGlobalSymbolTable(self, symbol_table: Dict[str, Token]):
@@ -471,6 +501,7 @@ class TypeCheck(object):
         设置符号表
         '''
         self.local_symbol_dict = symbol_table
+
 
 if __name__ == "__main__":
     import os

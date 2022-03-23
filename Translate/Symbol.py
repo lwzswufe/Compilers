@@ -158,12 +158,19 @@ class Node(Token):
     def __init__(self, name: str, _type: VariableType = UNDEFINE_TYPE) -> None:
         super().__init__(name, _type)
         self.priority = 0
+        self.terminal = None  # 关联终结符
 
     def SetPriority(self, priority: int):
         '''
-        设置运算符优先级 1 为最高
+        设置运算符优先级 0 为最高 99为最低
         '''
         self.priority = priority
+
+    def LinkToken(self, terminal: Token):
+        '''
+        关联token 终结符
+        '''
+        self.terminal = terminal
 
     def GetName(self) -> str:
         '''

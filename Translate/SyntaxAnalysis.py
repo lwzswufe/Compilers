@@ -246,12 +246,6 @@ class SyntaxParser(object):
         exp_node.SetPriority(99)
         cur_node = exp_node
         last_node = next_token
-        line_id = next_token.line_id
-        char_id = next_token.char_id
-        if line_id == 258:
-            a = 1
-        # if next_token.GetName() == "barssinceentry":
-        #     a = 1
         while next_token is not None:
             # 运算符
             if isinstance(next_token, Operator):
@@ -286,11 +280,11 @@ class SyntaxParser(object):
                         # 负号的情况 设置优先级为单运算符级别
                         else:
                             next_token.SetPriority(1)
-                            cur_node.SetPriority(1)
                             print("recognition negative sign {}:{}".format(next_token.line_id, next_token.char_id))
                     # 当前节点为空的情况 表达式初始节点
                     new_node = Node("E")
                     new_node.SetPriority(next_token.priority)
+                    new_node.LinkToken(next_token)
                     # 比较当前节点 与 前一个节点的优先级 若 当前节点优先级较高 则 根据优先级向上回溯
                     while cur_node.priority <= next_token.priority:
                         # 当前节点优先级较高 则去寻找当前节点的父节点
@@ -302,7 +296,7 @@ class SyntaxParser(object):
                     # 新节点优先级较高
                     if cur_node.priority > next_token.priority:
                         # 新节点优先级较高 新节点成为前节点的右子节点
-                        if len(cur_node) > 1 or (len(cur_node) > 0 and cur_node is exp_node):
+                        if len(cur_node) > 2 or (len(cur_node) > 0 and cur_node is exp_node):
                             # 当前节点的最右子节点成为新节点的左子节点
                             sub_node = cur_node.GetSubToken(-1)
                             new_node.AddSubToken(sub_node)
@@ -329,10 +323,11 @@ class SyntaxParser(object):
                 # 变量                                   字面量
                 elif isinstance(next_token, Variable) or isinstance(next_token, Literal):
                     terminal_node = next_token
-                # 判断当前节点是否为空
+                # 新建语法节点
                 new_node = Node("E")
                 new_node.SetPriority(0)
                 new_node.AddSubToken(terminal_node)
+                new_node.LinkToken(terminal_node)
                 cur_node.AddSubToken(new_node)
             # 获取下一个词法单元
             last_node = next_token
@@ -347,10 +342,14 @@ class SyntaxParser(object):
         '''
         解析定义语句
         文法
-        Type Var;
-        Type Var(Value);
+        D -> Type Var;
+        D -> Type Var DefaultValue;
         '''
+        new_node = Node("D")
+        new_node.SetPriority(0)
+        new_node.AddSubToken(type_token)
         next_token = self.GetNextToken()
+        new_node.AddSubToken(next_token)
         # print("cur:{} next:{}".format(type_token.GetName(), next_token.GetName()))
         if isinstance(next_token, Variable):
             var_token = next_token
@@ -361,6 +360,8 @@ class SyntaxParser(object):
             if isinstance(next_token, Operator) and next_token.GetName() == "(":
                 bra_token = self.ParseBrackets(next_token)
                 # 解析默认值！！！！！
+                if len(bra_token) > 0:
+                    new_node.AddSubToken(bra_token.GetSubToken(0))
                 # 获取语句末尾的分号
                 next_token = self.GetNextToken()
                 print("default next:{}".format(next_token.GetName()))
@@ -373,7 +374,7 @@ class SyntaxParser(object):
             new_token = CreateVar(name=var_token.GetName(), type_str=type_token.GetName(), default=default_str)
             self.AddLocalVar(new_token)
             # self.cur_token.AddSubToken(new_token)
-            return var_token
+            return new_node
         # 异常 类型后面没有跟变量名称
         else:
             raise UserSyntaxError("line {}:{} missing variable name".format(next_token.line_id, next_token.char_id))
