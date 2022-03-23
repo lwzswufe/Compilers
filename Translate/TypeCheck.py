@@ -2,9 +2,10 @@ from io import FileIO
 from typing import Dict, List
 import sys
 import os
+from unicodedata import name
 sys.path.append(os.path.abspath("."))
 sys.path.append(os.path.abspath(".."))
-from Symbol import Operator, Token, Node, Variable, Reversed, VariableType,BaseType, Function, Literal, CreateVar
+from Symbol import Operator, Token, Node, Variable, Reversed, Type, VariableType, BaseType, Function, Literal, CreateVar
 
 
 '''
@@ -206,7 +207,7 @@ class TypeCheck(object):
         # 返回引用对象 用于替换原有对象
         return ref_token
 
-    def MarkOperatorType(self, node: Node)：
+    def MarkOperatorType(self, node: Node) -> VariableType:
         '''
         标记终结符为运算符的 节点的数据类型
         '''
@@ -253,6 +254,7 @@ class TypeCheck(object):
         # for sub_token in node.sub_tokens:
         #     self.MarkTokenType(sub_token)
         op_token.SetDataType(node.type)
+        return node.type
 
     def MarkVariableType(self, token: Token):
         '''
@@ -270,62 +272,115 @@ class TypeCheck(object):
         if token.type.basetype == BaseType.SERIES:
             if len(token) > 0:
                 return token.type.membertype
+        return token.type
 
     def MarkNodeType(self, node: Node) -> VariableType:
         '''
         标记 语法节点 (非终结符) 的类型
         '''
-        node.type = self.M
+        # 非终结符
+        terminal = node.terminal
+        if isinstance(terminal, Operator):
+            self.MarkOperatorType(node)
+        elif isinstance(terminal, Type):
+            self.MarkDefineType(node)
+        elif terminal is not None:
+            node.type = self.MarkTokenType(terminal)
+        else:
+            a = 1
+        return node.type
+    
+    def MarkLiteralType(self, token: Token) -> VariableType:
+        '''
+        标记字面量类型
+        '''
+        name = token.GetName()
+        is_string = sum([c.isalpha() for c in name]) > 0
+        if name in self.global_symbol_dict.keys():
+            token.SetDataType(self.global_symbol_dict[name].type)
+        elif is_string or name.find('"') > 0:
+            token.SetDataType(TYPE_STRING)
+        elif name.find(".") > 0:
+            token.SetDataType(TYPE_FLOAT)
+        else:
+            token.SetDataType(TYPE_INT)
+        return token.type
+    
+    def MarkFunctionType(self, token: Token) -> VariableType:
+        '''
+        标记函数类型
+        '''
+        name = token.GetName()
+        token.SetDataType(self.global_symbol_dict[name].type)
+        if len(token) > 0:
+            self.MarkTokenType(token.GetSubToken(0))
+        # 模板函数确认类型
+        if IsEquivalentBaseType(token.type, TYPE_TEMPLATE):
+            bra_token = token.GetSubToken(0)
+            param_type = self.MarkTokenType(bra_token.GetSubToken(0))
+            token.SetDataType(param_type)
+            bra_token.SetDataType(param_type)
+        return token.type
+    
+    def MarkReversedType(self, token: Token) -> VariableType:
+        '''
+        标记保留字的类型
+        '''
+        name = token.GetName()
+        if name in ("if"):
+            if len(token) > 0:
+                cond_token = token.GetSubToken(0)
+                cond_token.SetDataType(TYPE_BOOL)
+        # 标记子节点类型
+        for sub_token in token.sub_tokens:
+            self.MarkTokenType(sub_token)
+        return token.type
+    
+    def MarkDefineType(self, node: Node) -> VariableType:
+        '''
+        标记定义语句的类型
+        '''
+        type_token = node.GetSubToken(0)
+        var_token = node.GetSubToken(1)
+        # 查询符号表
+        name = var_token.GetName()
+        if name in self.global_symbol_dict.keys():
+            var_token.SetDataType(self.global_symbol_dict[name].type)
+        elif name in self.local_symbol_dict.keys():
+            var_token.SetDataType(self.local_symbol_dict[name].type)
+        else:
+            pass
+        type_token.type = var_token.type
+        # 标注默认值类型
+        if len(node) > 2:
+            value_node: Node = node.GetSubToken(2)
+            value_node.SetDataType(var_token.type)
+            self.MarkNodeType(value_node)
+        node.type = var_token.type
+        return node.type
 
     def MarkTokenType(self, token: Token) -> VariableType:
         '''
         标记每一个节点数据类型 返回节点的数据类型
         '''
-        name = token.GetName()
-        # 非终结符
-        if isinstance(token, Node):
-            terminal = token.terminal
-            if isinstance(terminal, Operator):
-                self.MarkOperatorType(token)
-            else:
-                token.type = self.MarkTokenType(token)
         # 变量
-        elif isinstance(token, Variable):
+        if isinstance(token, Variable):
             self.MarkVariableType(token)
         # 字面量
         elif isinstance(token, Literal):
-            is_string = sum([c.isalpha() for c in name]) > 0
-            if name in self.global_symbol_dict.keys():
-                token.SetDataType(self.global_symbol_dict[name].type)
-            elif is_string or name.find('"') > 0:
-                token.SetDataType(TYPE_STRING)
-            elif name.find(".") > 0:
-                token.SetDataType(TYPE_FLOAT)
-            else:
-                token.SetDataType(TYPE_INT)
+            self.MarkLiteralType(token)
         # 函数 逐个检查参数
         elif isinstance(token, Function):
-            token.SetDataType(self.global_symbol_dict[name].type)
-            if len(token) > 0:
-                self.MarkTokenType(token.GetSubToken(0))
-            # 模板函数确认类型
-            if IsEquivalentBaseType(token.type, TYPE_TEMPLATE):
-                bra_token = token.GetSubToken(0)
-                param_type = self.MarkTokenType(bra_token.GetSubToken(0))
-                token.SetDataType(param_type)
-                bra_token.SetDataType(param_type)
-            return token.type
-        # 运算符
-        elif isinstance(token, Operator):
-            pass
+            self.MarkFunctionType(token)
         # 保留字
         elif isinstance(token, Reversed):
-            if len(token) > 0:
-                cond_token = token.GetSubToken(0)
-                cond_token.SetDataType(TYPE_BOOL)
-            # 标记子节点类型
-            for sub_token in token.sub_tokens:
-                self.MarkTokenType(sub_token)
+            self.MarkReversedType(token)
+        # 运算符 在MarkNodeType里处理
+        elif isinstance(token, Operator):
+            pass
+        # 非终结符
+        elif isinstance(token, Node):
+            token.type = self.MarkNodeType(token)
         return token.type
 
     def CheckTokenType(self, token: Token, target_type: VariableType):
@@ -480,8 +535,11 @@ class TypeCheck(object):
                 while self.idx < len(token):
                     print("line: {}/{}".format(self.idx, len(token)))
                     self.MarkTokenType(token.GetSubToken(self.idx))
-                    self.CheckTokenType(token.GetSubToken(self.idx), TYPE_VOID)
+                    # self.CheckTokenType(token.GetSubToken(self.idx), TYPE_VOID)
                     self.idx = self.GetNextIndex()
+            elif token.GetName() in ("params", "vars"):
+                for sub_token in token.sub_tokens:
+                    self.MarkTokenType(sub_token)
 
     def Show(self):
         '''

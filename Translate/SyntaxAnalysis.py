@@ -349,6 +349,7 @@ class SyntaxParser(object):
         new_node.SetPriority(0)
         new_node.AddSubToken(type_token)
         next_token = self.GetNextToken()
+        new_node.LinkToken(type_token)
         new_node.AddSubToken(next_token)
         # print("cur:{} next:{}".format(type_token.GetName(), next_token.GetName()))
         if isinstance(next_token, Variable):
