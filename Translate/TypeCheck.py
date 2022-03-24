@@ -35,7 +35,10 @@ def PrintCurrentToken(f: FileIO, token: Token, deep: int = 0):
     '''
     for i in range(deep):
         f.write("  ")
-    s = "{} ({})\n".format(token.GetName(), token.type)
+    if deep == 2:
+        s = "{} ({}) line:{}\n".format(token.GetName(), token.type, token.line_id)
+    else:
+        s = "{} ({})\n".format(token.GetName(), token.type)
     f.write(s)
 
 
@@ -53,15 +56,11 @@ def ShowSubToken(f: FileIO, token: Token, deep: int = 0):
                 ShowSubToken(f, sub_token, deep+1)
             r_token = Operator(brackets_dict[token.GetName()])
             PrintCurrentToken(f, r_token, deep)
-        elif len(token) == 2:
-            ShowSubToken(f, token.GetSubToken(0), deep+1)
+        else:
             # 显示当前token
             PrintCurrentToken(f, token, deep)
-            ShowSubToken(f, token.GetSubToken(1), deep+1)
-        elif len(token) == 1:
-            # 显示当前token
-            PrintCurrentToken(f, token, deep)
-            ShowSubToken(f, token.GetSubToken(0), deep+1)
+            for i in range(len(token)):
+                ShowSubToken(f, token.GetSubToken(i), deep+1)
     else:
         # 显示当前token
         PrintCurrentToken(f, token, deep)
@@ -213,14 +212,18 @@ class TypeCheck(object):
         '''
         op_token = node.terminal
         name = op_token.GetName()
-        # 比较运算符
+        # 比较运算符 逻辑运算符
         if name in ('==', '!=', '>', '>=', '<', '<='):
             node.SetDataType(TYPE_BOOL)
-        # 逻辑运算符
+            self.MarkTokenType(node.GetSubToken(0))
+            self.MarkTokenType(node.GetSubToken(-1))
         elif name in ('!', '&&', "||"):
             node.SetDataType(TYPE_BOOL)
             for sub_token in node.sub_tokens:
                 sub_token.SetDataType(TYPE_BOOL)
+            if len(node) >= 3:
+                self.MarkTokenType(node.GetSubToken(0))
+            self.MarkTokenType(node.GetSubToken(-1))
         # 算数运算符
         elif name in ('+', '-', '*', '/', '%'):
             if len(node) <= 1:
@@ -265,6 +268,7 @@ class TypeCheck(object):
         elif name in self.local_symbol_dict.keys():
             token.SetDataType(self.local_symbol_dict[name].type)
         else:
+            a = 1
             pass
         if len(token) > 0:
             self.MarkTokenType(token.GetSubToken(0))
@@ -289,7 +293,7 @@ class TypeCheck(object):
         else:
             a = 1
         return node.type
-    
+
     def MarkLiteralType(self, token: Token) -> VariableType:
         '''
         标记字面量类型
@@ -305,7 +309,7 @@ class TypeCheck(object):
         else:
             token.SetDataType(TYPE_INT)
         return token.type
-    
+
     def MarkFunctionType(self, token: Token) -> VariableType:
         '''
         标记函数类型
@@ -321,7 +325,7 @@ class TypeCheck(object):
             token.SetDataType(param_type)
             bra_token.SetDataType(param_type)
         return token.type
-    
+
     def MarkReversedType(self, token: Token) -> VariableType:
         '''
         标记保留字的类型
@@ -335,7 +339,7 @@ class TypeCheck(object):
         for sub_token in token.sub_tokens:
             self.MarkTokenType(sub_token)
         return token.type
-    
+
     def MarkDefineType(self, node: Node) -> VariableType:
         '''
         标记定义语句的类型
@@ -369,7 +373,7 @@ class TypeCheck(object):
         # 字面量
         elif isinstance(token, Literal):
             self.MarkLiteralType(token)
-        # 函数 逐个检查参数
+        # 函数
         elif isinstance(token, Function):
             self.MarkFunctionType(token)
         # 保留字
@@ -377,11 +381,74 @@ class TypeCheck(object):
             self.MarkReversedType(token)
         # 运算符 在MarkNodeType里处理
         elif isinstance(token, Operator):
-            pass
+            for sub_token in token.sub_tokens:
+                self.MarkTokenType(sub_token)
         # 非终结符
         elif isinstance(token, Node):
             token.type = self.MarkNodeType(token)
         return token.type
+
+    def CheckOperatorTokenType(self, token: Token, target_type: VariableType):
+        '''
+        检查在运算符后面使用带引用参数的函数的情况
+        '''
+        name = token.GetName()
+        if name == "=":
+            # 在赋值运算符后使用此类函数的情况
+            sub_token = token.GetSubToken(1)
+            # 如果赋值运算符右节点是函数 且 该函数的最后一个参数是引用类型
+            if isinstance(sub_token, Function) and IsFinalParamIsRef(sub_token):
+                return_token = self.TheReferenceParamFunAssign(sub_token)
+                # 检查函数节点类型
+                self.CheckTokenType(return_token, TYPE_VOID)
+                # 返回 原有token已经被替换为函数
+                return
+        elif name in ("+", "-", '*', "/", "%", "!"):
+            # 在运算符后使用此类函数的情况
+            for i, sub_token in enumerate(token.sub_tokens):
+                if isinstance(sub_token, Function) and IsFinalParamIsRef(sub_token):
+                    return_token = self.TheReferenceParamFunOperator(sub_token)
+                    token.sub_tokens[i] = sub_token
+        # 如果该运算符的类型未知 标记类型
+        # if IsEquivalentBaseType(token.type, TYPE_VOID):
+        #     # 自底向上标记类型
+        #     self.MarkTokenType(token)
+        # 检查子节点数量
+        # 括号 非函数参数的情况
+        if name in ('(', '[', '{'):
+            for i in range(len(token)):
+                sub_token: Token = token.GetSubToken(i)
+                self.CheckTokenType(sub_token, token.type)
+        elif len(token) == 0:
+            raise UserTypeError("line {}:{} token:{} has 0 sub tokenes".format(token.line_id, token.char_id, name))
+        # 一元运算符
+        elif len(token) == 1:
+            if name not in ('-', '!'):
+                raise UserTypeError("line {}:{} token:{} has more than 2 sub tokenes".format(token.line_id, token.char_id, name))
+            sub_token: Token = token.GetSubToken(0)
+            self.CheckTokenType(sub_token, token.type)
+        # 二元运算符
+        elif len(token) == 2:
+            # 检查左右节点类型是否一致 不一致的话考虑窄化/泛化
+            left_token = token.GetSubToken(0)
+            right_token = token.GetSubToken(1)
+            # 不一致的情况
+            if not IsEquivalentBaseType(left_token.type, right_token.type):
+                pass
+            # 检查右值运算符
+            if name == '=' and left_token.type.const:
+                raise UserTypeError("line {}:{} token:{} at left of the = is const".format(token.line_id, token.char_id, token.GetName()))
+            # 获取共同类型
+            try:
+                # 程序运行前需要将现有类型转换为 符号表的类型
+                common_type = GetCommonType(left_token.type, right_token.type)
+                # 检查左右节点
+                self.CheckTokenType(left_token, common_type)
+                self.CheckTokenType(right_token, common_type)
+            except UserTypeError as err:
+                print("line {}:{}  token {} {}  error:{}".format(token.line_id, token.char_id, left_token.GetName(), right_token.GetName(), err))
+        else:
+            raise UserTypeError("line {}:{} token:{} has more than 2 sub tokenes".format(token.line_id, token.char_id, token.GetName()))
 
     def CheckTokenType(self, token: Token, target_type: VariableType):
         '''
@@ -393,66 +460,10 @@ class TypeCheck(object):
         #     raise UserTypeError("line {}:{} target type {} user type:{}".format(token.line_id, token.char_id, token.type, target_type))
         # 指针类型检查
         # elif token.type.pointer == target_type.pointer:
-        #     pass 
+        #     pass
         # 对于操作符
         if isinstance(token, Operator):
-            # 检查在运算符后面使用带引用参数的函数的情况
-            if name == "=":
-                # 在赋值运算符后使用此类函数的情况
-                sub_token = token.GetSubToken(1)
-                # 如果赋值运算符右节点是函数 且 该函数的最后一个参数是引用类型
-                if isinstance(sub_token, Function) and IsFinalParamIsRef(sub_token):
-                    return_token = self.TheReferenceParamFunAssign(sub_token)
-                    # 检查函数节点类型
-                    self.CheckTokenType(return_token, TYPE_VOID)
-                    # 返回 原有token已经被替换为函数
-                    return
-            elif name in ("+", "-", '*', "/", "%", "!"):
-                # 在运算符后使用此类函数的情况
-                for i, sub_token in enumerate(token.sub_tokens):
-                    if isinstance(sub_token, Function) and IsFinalParamIsRef(sub_token):
-                        return_token = self.TheReferenceParamFunOperator(sub_token)
-                        token.sub_tokens[i] = sub_token
-            # 如果该运算符的类型未知 标记类型
-            # if IsEquivalentBaseType(token.type, TYPE_VOID):
-            #     # 自底向上标记类型
-            #     self.MarkTokenType(token)
-            # 检查子节点数量
-            # 括号 非函数参数的情况
-            if name in ('(', '[', '{'):
-                for i in range(len(token)):
-                    sub_token: Token = token.GetSubToken(i)
-                    self.CheckTokenType(sub_token, token.type)
-            elif len(token) == 0:
-                raise UserTypeError("line {}:{} token:{} has 0 sub tokenes".format(token.line_id, token.char_id, name))
-            # 一元运算符
-            elif len(token) == 1:
-                if name not in ('-', '!'):
-                    raise UserTypeError("line {}:{} token:{} has more than 2 sub tokenes".format(token.line_id, token.char_id, name))
-                sub_token: Token = token.GetSubToken(0)
-                self.CheckTokenType(sub_token, token.type)
-            # 二元运算符
-            elif len(token) == 2:
-                # 检查左右节点类型是否一致 不一致的话考虑窄化/泛化
-                left_token = token.GetSubToken(0)
-                right_token = token.GetSubToken(1)
-                # 不一致的情况
-                if not IsEquivalentBaseType(left_token.type, right_token.type):
-                    pass
-                # 检查右值运算符
-                if name == '=' and left_token.type.const:
-                    raise UserTypeError("line {}:{} token:{} at left of the = is const".format(token.line_id, token.char_id, token.GetName()))
-                # 获取共同类型
-                try:
-                    # 程序运行前需要将现有类型转换为 符号表的类型
-                    common_type = GetCommonType(left_token.type, right_token.type)
-                    # 检查左右节点
-                    self.CheckTokenType(left_token, common_type)
-                    self.CheckTokenType(right_token, common_type)
-                except UserTypeError as err:
-                    print("line {}:{}  token {} {}  error:{}".format(token.line_id, token.char_id, left_token.GetName(), right_token.GetName(), err))
-            else:
-                raise UserTypeError("line {}:{} token:{} has more than 2 sub tokenes".format(token.line_id, token.char_id, token.GetName()))
+            self.CheckOperatorTokenType(self, token)
         # 函数
         elif isinstance(token, Function):
             if len(token) == 0:
@@ -535,7 +546,7 @@ class TypeCheck(object):
                 while self.idx < len(token):
                     print("line: {}/{}".format(self.idx, len(token)))
                     self.MarkTokenType(token.GetSubToken(self.idx))
-                    # self.CheckTokenType(token.GetSubToken(self.idx), TYPE_VOID)
+                    self.CheckTokenType(token.GetSubToken(self.idx), TYPE_VOID)
                     self.idx = self.GetNextIndex()
             elif token.GetName() in ("params", "vars"):
                 for sub_token in token.sub_tokens:

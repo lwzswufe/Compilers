@@ -244,6 +244,7 @@ class SyntaxParser(object):
         '''
         exp_node = Node("E")  # 返回的表达式节点
         exp_node.SetPriority(99)
+        exp_node.line_id = next_token.line_id
         cur_node = exp_node
         last_node = next_token
         while next_token is not None:
@@ -336,7 +337,9 @@ class SyntaxParser(object):
         # 无效表达式的情况 返回根节点
         if len(exp_node) == 0:
             return exp_node
-        return exp_node.GetSubToken(0)
+        return_node = exp_node.GetSubToken(0)
+        return_node.line_id = exp_node.line_id
+        return return_node
 
     def ParseDefineGrammer(self, type_token: Token) -> Token:
         '''
@@ -348,6 +351,7 @@ class SyntaxParser(object):
         new_node = Node("D")
         new_node.SetPriority(0)
         new_node.AddSubToken(type_token)
+        new_node.line_id = type_token.line_id
         next_token = self.GetNextToken()
         new_node.LinkToken(type_token)
         new_node.AddSubToken(next_token)
