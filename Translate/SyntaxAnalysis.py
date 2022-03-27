@@ -5,7 +5,7 @@ import sys
 import os
 sys.path.append(os.path.abspath("."))
 sys.path.append(os.path.abspath(".."))
-from Symbol import Operator, Token, Node, Variable, Reversed, Type, Function, Literal, CreateVar
+from Symbol import Operator, Token, Node, Variable, Reversed, Type, Function, Literal, CreateVar, VariableType
 
 
 '''
@@ -19,14 +19,14 @@ STATE_VARS = 2
 STATE_MAJOR = 3
 STATE_END = 4
 # 运算符优先级
-OPERATOR_PRIORITY = {"!": 0,
-                     "*": 1, "/": 1, "%": 1, 
-                     "+": 2, "-": 2,
-                     ">=": 3, ">": 3, "<=": 3, "<": 3,
-                     "==": 4, "!=": 4,
-                     "&&": 5,
-                     "||": 6,
-                     "=": 7}
+OPERATOR_PRIORITY = {"!": 1,
+                     "*": 2, "/": 2, "%": 2, 
+                     "+": 3, "-": 3,
+                     ">=": 4, ">": 4, "<=": 4, "<": 4,
+                     "==": 5, "!=": 5,
+                     "&&": 6,
+                     "||": 7,
+                     "=": 8}
 
 
 class UserSyntaxError(SyntaxError):
@@ -253,7 +253,16 @@ class SyntaxParser(object):
                 # 左括号
                 if next_token.GetName() in ("(", "[", "{"):
                     tmp_node = self.ParseBrackets(next_token)
-                    last_node.AddSubToken(tmp_node)
+                    new_node = Node("E")
+                    new_node.SetPriority(0)
+                    new_node.LinkToken(tmp_node)
+                    new_node.AddSubToken(tmp_node)
+                    if next_token.GetName() == '[':
+                        last_node.AddSubToken(tmp_node)
+                    elif isinstance(last_node, Variable) or isinstance(last_node, Function):
+                        last_node.AddSubToken(new_node)
+                    else:
+                        cur_node.AddSubToken(new_node)
                     # print("expression add sub bracteks")
                 # 右括号
                 elif next_token.GetName() in (")", "]", "}"):
